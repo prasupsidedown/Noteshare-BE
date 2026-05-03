@@ -1,9 +1,11 @@
+// Fix: tambahkan ResourceType berdasarkan ekstensi file
 package utils
 
 import (
 	"context"
 	"fmt"
 	"noteshare-be/config"
+	"path/filepath"
 
 	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
@@ -23,14 +25,29 @@ func init() {
 	}
 }
 
-// UploadToCloudinary uploads a file to Cloudinary and returns the URL and PublicID
+func getResourceType(filePath string) string {
+	ext := filepath.Ext(filePath)
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg":
+		return "image"
+	case ".mp4", ".mov", ".avi", ".mkv":
+		return "video"
+	default:
+		// PDF, DOC, DOCX, PPT, PPTX, TXT, dll
+		return "raw"
+	}
+}
+
 func UploadToCloudinary(ctx context.Context, filePath string, folder string) (string, string, error) {
 	if cld == nil {
 		return "", "", fmt.Errorf("cloudinary not initialized")
 	}
 
+	resourceType := getResourceType(filePath)
+
 	resp, err := cld.Upload.Upload(ctx, filePath, uploader.UploadParams{
-		Folder: folder,
+		Folder:       folder,
+		ResourceType: resourceType,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to upload to cloudinary: %v", err)
@@ -39,7 +56,6 @@ func UploadToCloudinary(ctx context.Context, filePath string, folder string) (st
 	return resp.SecureURL, resp.PublicID, nil
 }
 
-// DeleteFromCloudinary deletes a file from Cloudinary
 func DeleteFromCloudinary(ctx context.Context, publicID string) error {
 	if cld == nil {
 		return fmt.Errorf("cloudinary not initialized")

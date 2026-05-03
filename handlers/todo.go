@@ -205,16 +205,18 @@ func DeleteTodoList(c *gin.Context) {
 		return
 	}
 
+	// Check authorization FIRST
 	if todo.UserID != userID {
+		utils.ErrorResponse(c, http.StatusForbidden, "You are not authorized to delete this to-do list")
+		return
+	}
+
+	// Then delete from database
 	if err := database.DB.Delete(&todo).Error; err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete to-do list")
 		return
 	}
-ttp.StatusForbidden, "You are not authorized to delete this to-do list")
-		return
-	}
 
-	database.DB.Delete(&todo)
 	utils.SuccessResponse(c, http.StatusOK, "To-do list deleted", nil)
 }
 
@@ -229,6 +231,16 @@ func GetMyTodoLists(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
+	var todos []models.TodoList
+	var total int64
+
+	// Get total count
+	if err := database.DB.Model(&models.TodoList{}).Where("user_id = ?", userID).Count(&total).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to count to-do lists")
+		return
+	}
+
+	// Get paginated results
 	if err := database.DB.Where("user_id = ?", userID).
 		Preload("Note").
 		Preload("User").
@@ -237,11 +249,7 @@ func GetMyTodoLists(c *gin.Context) {
 		Find(&todos).Error; err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve to-do lists")
 		return
-	}here("user_id = ?", userID).
-		Preload("Note").
-		Offset(offset).Limit(limit).
-		Order("created_at DESC").
-		Find(&todos)
+	}
 
 	utils.PaginatedSuccessResponse(c, http.StatusOK, "My to-do lists retrieved", todos, page, limit, total)
 }

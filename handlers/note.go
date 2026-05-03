@@ -273,35 +273,32 @@ func UpdateNote(c *gin.Context) {
 }
 
 // DeleteNote - DELETE /api/v1/notes/:id
+// DeleteNote - DELETE /api/v1/notes/:id
 func DeleteNote(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	id := c.Param("id")Cloudinary
+	id := c.Param("id")
+	
+	// Get note first to retrieve CloudinaryID
+	var note models.Note
+	if err := database.DB.Where("id = ? AND user_id = ?", id, userID).First(&note).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Note not found")
+		return
+	}
+	
+	// Delete from Cloudinary
 	deleteCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	
 	if err := utils.DeleteFromCloudinary(deleteCtx, note.CloudinaryID); err != nil {
-		cancel()
 		// Log error but continue with DB deletion
 		fmt.Printf("Warning: Failed to delete file from Cloudinary: %v\n", err)
 	}
-	cancel()
-
+	
 	// Delete from database
 	if err := database.DB.Delete(&note).Error; err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete note")
 		return
 	}
-st(&note, id).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Note not found")
-		return
-	}
-
-	if note.UserID != userID {
-		utils.ErrorResponse(c, http.StatusForbidden, "You are not authorized to delete this note")
-		return
-	}
-
-	// Remove file from storage
-	os.Remove(note.FilePath)
-
-	database.DB.Delete(&note)
+	
 	utils.SuccessResponse(c, http.StatusOK, "Note deleted successfully", nil)
 }
