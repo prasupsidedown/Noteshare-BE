@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"net/http"
-	"noteshare-backend/database"
-	"noteshare-backend/middleware"
-	"noteshare-backend/models"
-	"noteshare-backend/utils"
+	"noteshare-be/database"
+	"noteshare-be/middleware"
+	"noteshare-be/models"
+	"noteshare-be/utils"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -115,7 +115,17 @@ func UpdateCourse(c *gin.Context) {
 		updates["semester"] = req.Semester
 	}
 
-	database.DB.Model(&course).Updates(updates)
+	if err := database.DB.Model(&course).Updates(updates).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update course")
+		return
+	}
+
+	// Reload course with user relationship to get updated data
+	if err := database.DB.Preload("User").First(&course, id).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve updated course")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Course updated successfully", course)
 }
 
@@ -135,6 +145,10 @@ func DeleteCourse(c *gin.Context) {
 		return
 	}
 
-	database.DB.Delete(&course)
+	if err := database.DB.Delete(&course).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete course")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Course deleted successfully", nil)
 }

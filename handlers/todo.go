@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"noteshare-backend/config"
-	"noteshare-backend/database"
-	"noteshare-backend/middleware"
-	"noteshare-backend/models"
-	"noteshare-backend/utils"
+	"noteshare-be/config"
+	"noteshare-be/database"
+	"noteshare-be/middleware"
+	"noteshare-be/models"
+	"noteshare-be/utils"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -109,6 +109,12 @@ Buat 5-8 to-do item yang relevan dan actionable berdasarkan topik catatan terseb
 		return
 	}
 
+	// Reload with relationships
+	if err := database.DB.Preload("Note").Preload("User").First(&todoList, todoList.ID).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve created to-do list")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusCreated, "To-do list generated successfully", todoList)
 }
 
@@ -120,6 +126,8 @@ func GetTodoLists(c *gin.Context) {
 	var todos []models.TodoList
 	if err := database.DB.
 		Where("note_id = ? AND user_id = ?", noteID, userID).
+		Preload("Note").
+		Preload("User").
 		Order("created_at DESC").
 		Find(&todos).Error; err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve to-do lists")
@@ -177,7 +185,11 @@ func UpdateTodoItem(c *gin.Context) {
 	}
 
 	todo.Items[req.Index].Completed = req.Completed
-	database.DB.Save(&todo)
+
+	if err := database.DB.Save(&todo).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update to-do item")
+		return
+	}
 
 	utils.SuccessResponse(c, http.StatusOK, "To-do item updated", todo)
 }
@@ -194,7 +206,11 @@ func DeleteTodoList(c *gin.Context) {
 	}
 
 	if todo.UserID != userID {
-		utils.ErrorResponse(c, http.StatusForbidden, "You are not authorized to delete this to-do list")
+	if err := database.DB.Delete(&todo).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete to-do list")
+		return
+	}
+ttp.StatusForbidden, "You are not authorized to delete this to-do list")
 		return
 	}
 
@@ -213,17 +229,61 @@ func GetMyTodoLists(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
-	var total int64
-	database.DB.Model(&models.TodoList{}).Where("user_id = ?", userID).Count(&total)
-
-	var todos []models.TodoList
-	database.DB.Where("user_id = ?", userID).
+	if err := database.DB.Where("user_id = ?", userID).
+		Preload("Note").
+		Preload("User").
+		Offset(offset).Limit(limit).
+		Order("created_at DESC").
+		Find(&todos).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve to-do lists")
+		return
+	}here("user_id = ?", userID).
 		Preload("Note").
 		Offset(offset).Limit(limit).
 		Order("created_at DESC").
 		Find(&todos)
 
 	utils.PaginatedSuccessResponse(c, http.StatusOK, "My to-do lists retrieved", todos, page, limit, total)
+}
+
+// AddTodoItem - POST /api/v1/todos/:id/items
+// Manually add a to-do item to a to-do list
+func AddTodoItem(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	id := c.Param("id")
+
+	var todo models.TodoList
+	if err := database.DB.First(&todo, id).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "To-do list not found")
+		return
+	}
+
+	if todo.UserID != userID {
+		utils.ErrorResponse(c, http.StatusForbidden, "You are not authorized to add items to this to-do list")
+		return
+	}
+
+	var req models.ManualTodoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Add new item to the list
+	newItem := models.TodoItem{
+		Task:      req.Task,
+		Priority:  req.Priority,
+		Completed: false,
+	}
+
+	todo.Items = append(todo.Items, newItem)
+
+	if err := database.DB.Save(&todo).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to add to-do item")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "To-do item added successfully", todo)
 }
 
 // ─── Anthropic API Helper ──────────────────────────────────────────────────

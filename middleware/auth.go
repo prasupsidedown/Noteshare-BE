@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"net/http"
-	"noteshare-backend/utils"
+	"noteshare-be/utils"
 	"strings"
 
 	"github.com/gin-gonic/gin"

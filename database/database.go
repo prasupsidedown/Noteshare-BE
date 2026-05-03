@@ -3,8 +3,8 @@ package database
 import (
 	"fmt"
 	"log"
-	"noteshare-backend/config"
-	"noteshare-backend/models"
+	"noteshare-be/config"
+	"noteshare-be/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

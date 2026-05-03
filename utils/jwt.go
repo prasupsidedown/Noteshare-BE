@@ -2,7 +2,7 @@ package utils
 
 import (
 	"errors"
-	"noteshare-backend/config"
+	"noteshare-be/config"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"

@@ -18,8 +18,9 @@ type Course struct {
 	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	User  User   `json:"user,omitempty" gorm:"foreignKey:UserID"`
-	Notes []Note `json:"notes,omitempty" gorm:"foreignKey:CourseID"`
+	User       User   `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Notes      []Note `json:"notes,omitempty" gorm:"foreignKey:CourseID"`
+	TotalNotes int    `json:"total_notes" gorm:"-"` // dihitung saat query, tidak disimpan di DB
 }
 
 type CreateCourseRequest struct {

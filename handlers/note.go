@@ -1,13 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
-	"noteshare-backend/config"
-	"noteshare-backend/database"
-	"noteshare-backend/middleware"
-	"noteshare-backend/models"
-	"noteshare-backend/utils"
+	"noteshare-be/config"
+	"noteshare-be/database"
+	"noteshare-be/middleware"
+	"noteshare-be/models"
+	"noteshare-be/utils"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -141,34 +142,55 @@ func UploadNote(c *gin.Context) {
 		return
 	}
 
-	// Generate unique filename
-	uniqueFilename := fmt.Sprintf("%d_%d%s", userID, time.Now().UnixNano(), ext)
-	filePath := filepath.Join(config.AppConfig.UploadDir, uniqueFilename)
+	// Save file temporarily to upload to Cloudinary
+	tempFilename := fmt.Sprintf("%d_%d%s", userID, time.Now().UnixNano(), ext)
+	tempFilePath := filepath.Join(os.TempDir(), tempFilename)
 
-	if err := c.SaveUploadedFile(file, filePath); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to save file")
+	if err := c.SaveUploadedFile(file, tempFilePath); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to process file")
+		return
+	}
+	defer os.Remove(tempFilePath) // cleanup temp file
+
+	// Upload to Cloudinary
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	cloudURL, cloudinaryID, err := utils.UploadToCloudinary(ctx, tempFilePath, "noteshare/notes")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to upload file to cloud storage")
 		return
 	}
 
 	note := models.Note{
-		Title:       req.Title,
-		Description: req.Description,
-		FilePath:    filePath,
-		FileName:    file.Filename,
-		FileSize:    file.Size,
-		FileType:    ext,
-		CourseID:    req.CourseID,
-		UserID:      userID,
-		IsPublic:    req.IsPublic,
+		Title:         req.Title,
+		Description:   req.Description,
+		CloudinaryURL: cloudURL,
+		CloudinaryID:  cloudinaryID,
+		FileName:      file.Filename,
+		FileSize:      file.Size,
+		FileType:      ext,
+		Semester:      req.Semester,
+		CourseID:      req.CourseID,
+		UserID:        userID,
+		IsPublic:      req.IsPublic,
 	}
 
 	if err := database.DB.Create(&note).Error; err != nil {
-		os.Remove(filePath) // cleanup file on DB error
+		// Cleanup file from Cloudinary on DB error
+		deleteCtx, deleteCancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		utils.DeleteFromCloudinary(deleteCtx, cloudinaryID)
+		deleteCancel()
+		
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to save note")
 		return
 	}
 
-	database.DB.Preload("User").Preload("Course").First(&note, note.ID)
+	if err := database.DB.Preload("User").Preload("Course").First(&note, note.ID).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve created note")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusCreated, "Note uploaded successfully", note)
 }
 
@@ -183,17 +205,21 @@ func DownloadNote(c *gin.Context) {
 	}
 
 	if !note.IsPublic {
-		userID, exists := c.Get("userID")
-		if !exists || userID.(uint) != note.UserID {
+		userID := middleware.GetUserID(c)
+		if userID == 0 || userID != note.UserID {
 			utils.ErrorResponse(c, http.StatusForbidden, "This note is private")
 			return
 		}
 	}
 
 	// Increment download count
-	database.DB.Model(&note).UpdateColumn("downloads", note.Downloads+1)
+	if err := database.DB.Model(&note).UpdateColumn("downloads", note.Downloads+1).Error; err != nil {
+		// Log error but don't fail the download
+		fmt.Printf("Warning: Failed to update download count: %v\n", err)
+	}
 
-	c.FileAttachment(note.FilePath, note.FileName)
+	// Redirect to Cloudinary URL
+	c.Redirect(http.StatusFound, note.CloudinaryURL)
 }
 
 // UpdateNote - PUT /api/v1/notes/:id
@@ -225,21 +251,45 @@ func UpdateNote(c *gin.Context) {
 	if req.Description != "" {
 		updates["description"] = req.Description
 	}
+	if req.Semester != "" {
+		updates["semester"] = req.Semester
+	}
 	if req.IsPublic != nil {
 		updates["is_public"] = *req.IsPublic
 	}
 
-	database.DB.Model(&note).Updates(updates)
+	if err := database.DB.Model(&note).Updates(updates).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update note")
+		return
+	}
+
+	// Reload note with relationships to get updated data
+	if err := database.DB.Preload("User").Preload("Course").First(&note, id).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve updated note")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Note updated successfully", note)
 }
 
 // DeleteNote - DELETE /api/v1/notes/:id
 func DeleteNote(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	id := c.Param("id")
+	id := c.Param("id")Cloudinary
+	deleteCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	if err := utils.DeleteFromCloudinary(deleteCtx, note.CloudinaryID); err != nil {
+		cancel()
+		// Log error but continue with DB deletion
+		fmt.Printf("Warning: Failed to delete file from Cloudinary: %v\n", err)
+	}
+	cancel()
 
-	var note models.Note
-	if err := database.DB.First(&note, id).Error; err != nil {
+	// Delete from database
+	if err := database.DB.Delete(&note).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete note")
+		return
+	}
+st(&note, id).Error; err != nil {
 		utils.ErrorResponse(c, http.StatusNotFound, "Note not found")
 		return
 	}
