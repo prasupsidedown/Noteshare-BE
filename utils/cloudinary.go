@@ -1,28 +1,27 @@
-// Fix: tambahkan ResourceType berdasarkan ekstensi file
 package utils
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"noteshare-be/config"
+	"os"
 	"path/filepath"
 
 	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 )
 
-var cld *cloudinary.Cloudinary
-
-func init() {
-	var err error
-	cld, err = cloudinary.NewFromURL(fmt.Sprintf("cloudinary://%s:%s@%s",
+func getCloudinary() (*cloudinary.Cloudinary, error) {
+	cld, err := cloudinary.NewFromURL(fmt.Sprintf("cloudinary://%s:%s@%s",
 		config.AppConfig.CloudinaryAPIKey,
 		config.AppConfig.CloudinaryAPISecret,
 		config.AppConfig.CloudinaryCloudName,
 	))
 	if err != nil {
-		fmt.Printf("Warning: Failed to initialize Cloudinary: %v\n", err)
+		return nil, fmt.Errorf("failed to initialize Cloudinary: %v", err)
 	}
+	return cld, nil
 }
 
 func getResourceType(filePath string) string {
@@ -33,19 +32,27 @@ func getResourceType(filePath string) string {
 	case ".mp4", ".mov", ".avi", ".mkv":
 		return "video"
 	default:
-		// PDF, DOC, DOCX, PPT, PPTX, TXT, dll
 		return "raw"
 	}
 }
 
 func UploadToCloudinary(ctx context.Context, filePath string, folder string) (string, string, error) {
-	if cld == nil {
-		return "", "", fmt.Errorf("cloudinary not initialized")
+	client, err := getCloudinary()
+	if err != nil {
+		return "", "", err
 	}
 
-	resourceType := getResourceType(filePath)
+	// Buka file sebagai io.Reader — fix untuk Windows path
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open file: %v", err)
+	}
+	defer f.Close()
 
-	resp, err := cld.Upload.Upload(ctx, filePath, uploader.UploadParams{
+	resourceType := getResourceType(filePath)
+	log.Printf("Uploading to Cloudinary — resourceType: %q", resourceType)
+
+	resp, err := client.Upload.Upload(ctx, f, uploader.UploadParams{
 		Folder:       folder,
 		ResourceType: resourceType,
 	})
@@ -53,15 +60,22 @@ func UploadToCloudinary(ctx context.Context, filePath string, folder string) (st
 		return "", "", fmt.Errorf("failed to upload to cloudinary: %v", err)
 	}
 
+	if resp.Error.Message != "" {
+		return "", "", fmt.Errorf("cloudinary error: %s", resp.Error.Message)
+	}
+
+	log.Printf("Cloudinary upload success — SecureURL: %q, PublicID: %q", resp.SecureURL, resp.PublicID)
+
 	return resp.SecureURL, resp.PublicID, nil
 }
 
 func DeleteFromCloudinary(ctx context.Context, publicID string) error {
-	if cld == nil {
-		return fmt.Errorf("cloudinary not initialized")
+	client, err := getCloudinary()
+	if err != nil {
+		return err
 	}
 
-	_, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
+	_, err = client.Upload.Destroy(ctx, uploader.DestroyParams{
 		PublicID: publicID,
 	})
 	if err != nil {
